@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>车牌识别演示系统</title>
+    
+    <!-- 引入Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 引入Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    
+    <!-- 引入Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    
+    <!-- 自定义Tailwind配置 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#165DFF',
+                        secondary: '#6B7280',
+                        success: '#22C55E',
+                        warning: '#F59E0B',
+                        danger: '#EF4444',
+                        info: '#3B82F6',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    
+    <!-- 自定义工具类 -->
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .shadow-soft {
+                box-shadow: 0 2px 15px rgba(0, 0, 0, 0.05);
+            }
+            .transition-all-300 {
+                transition: all 300ms ease-in-out;
+            }
+        }
+    </style>
+    
+    <style>
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        }
+        .upload-area {
+            min-height: 200px;
+            border: 2px dashed #e2e8f0;
+            transition: all 0.3s ease;
+        }
+        .upload-area:hover {
+            border-color: #165DFF;
+            background-color: #f0f7ff;
+        }
+        .result-card {
+            transform: translateY(20px);
+            opacity: 0;
+            animation: fadeInUp 0.5s ease forwards;
+        }
+        @keyframes fadeInUp {
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #165DFF;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div id="app" class="max-w-6xl mx-auto px-4 py-8">
+        <!-- 页面头部 -->
+        <header class="mb-8 text-center">
+            <div class="flex items-center justify-center mb-2">
+                <i class="fa fa-car text-primary text-4xl mr-3"></i>
+                <h1 class="text-3xl font-bold text-gray-800">车牌识别演示系统</h1>
+            </div>
+            <p class="text-gray-600">上传车辆图片，自动识别车牌信息</p>
+        </header>
+        
+        <!-- 主要内容 -->
+        <main class="space-y-8">
+            <!-- 上传区域 -->
+            <section class="bg-white rounded-xl p-6 shadow-soft">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">图片上传</h2>
+                
+                <!-- 拖拽上传区域 -->
+                <div 
+                    class="upload-area rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer"
+                    @click="triggerFileInput"
+                    @dragover.prevent="isDragging = true"
+                    @dragleave.prevent="isDragging = false"
+                    @drop.prevent="handleDrop"
+                    :class="{ 'border-primary bg-blue-50': isDragging }"
+                >
+                    <input 
+                        ref="fileInput" 
+                        type="file" 
+                        accept="image/*" 
+                        class="hidden"
+                        @change="handleFileSelect"
+                    />
+                    
+                    <i class="fa fa-cloud-upload text-5xl text-gray-400 mb-3"></i>
+                    <p class="text-gray-600 text-center">
+                        <span v-if="selectedFile">{{ selectedFile.name }}</span>
+                        <span v-else>拖拽图片到此处或点击上传</span>
+                    </p>
+                    <p class="text-gray-400 text-sm mt-2">支持 JPG, PNG, WEBP 等格式</p>
+                    
+                    <!-- 预览图 -->
+                    <div v-if="previewUrl" class="mt-4 w-full max-w-md">
+                        <img :src="previewUrl" class="max-w-full h-auto rounded-lg border border-gray-200" alt="预览图">
+                    </div>
+                </div>
+                
+                <!-- 操作按钮 -->
+                <div class="mt-4 flex flex-wrap gap-3 justify-center">
+                    <button 
+                        @click="triggerFileInput"
+                        class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all-300 flex items-center"
+                        :disabled="isLoading"
+                    >
+                        <i class="fa fa-file-image-o mr-2"></i> 选择图片
+                    </button>
+                    
+                    <button 
+                        @click="recognize"
+                        class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-all-300 flex items-center"
+                        :disabled="!selectedFile || isLoading"
+                    >
+                        <span v-if="isLoading" class="loader mr-2"></span>
+                        <i v-else class="fa fa-search mr-2"></i>
+                        <span v-if="isLoading">识别中...</span><span v-else>开始识别</span>
+                    </button>
+                    
+                    <button 
+                        @click="reset"
+                        class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all-300 flex items-center"
+                        :disabled="isLoading"
+                    >
+                        <i class="fa fa-refresh mr-2"></i> 重置
+                    </button>
+                </div>
+            </section>
+            
+            <!-- 结果展示 -->
+            <section v-if="results && results.length > 0" class="result-card bg-white rounded-xl p-6 shadow-soft">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                    <i class="fa fa-check-circle text-success mr-2"></i> 识别结果
+                </h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- 识别区域图片 -->
+                    <div class="space-y-2" v-if="plateRegionImageUrl">
+                        <h3 class="text-sm font-medium text-gray-500">识别区域</h3>
+                        <img :src="plateRegionImageUrl" class="w-full h-auto rounded-lg border border-gray-200" alt="识别区域">
+                    </div>
+                    <!-- 原始图片（仅在没有识别区域图片时显示） -->
+                    <div class="space-y-2" v-else>
+                        <h3 class="text-sm font-medium text-gray-500">原始图片</h3>
+                        <img :src="originalImageUrl" class="w-full h-auto rounded-lg border border-gray-200" alt="原始图片">
+                    </div>
+                    
+                    <!-- 结果图片 -->
+                    <div class="space-y-2">
+                        <h3 class="text-sm font-medium text-gray-500">识别结果</h3>
+                        <img :src="resultImageUrl" class="w-full h-auto rounded-lg border border-gray-200" alt="识别结果">
+                    </div>
+                </div>
+                
+                <!-- 识别详情 -->
+                <div class="mt-6">
+                    <h3 class="text-lg font-medium text-gray-700 mb-3">识别详情</h3>
+                    <div class="space-y-4">
+                        <div v-for="(result, index) in results" :key="index" class="p-4 bg-gray-50 rounded-lg">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <div class="flex items-center">
+                                    <span class="text-sm font-medium text-gray-500 mr-2">车牌号码:</span>
+                                    <span class="text-xl font-bold text-primary">{{ result.number_plate }}</span>
+                                </div>
+                                <div class="flex flex-wrap gap-4">
+                                    <div class="flex items-center">
+                                        <span class="text-sm font-medium text-gray-500 mr-1">OCR置信度:</span>
+                                        <span class="text-green-600 font-semibold">{{ (result.ocr_confidence * 100).toFixed(1) }}%</span>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <span class="text-sm font-medium text-gray-500 mr-1">YOLO置信度:</span>
+                                        <span class="text-blue-600 font-semibold">{{ (result.yolo_confidence * 100).toFixed(1) }}%</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 坐标信息（可选显示） -->
+                            <div class="mt-2 text-xs text-gray-500" v-if="showCoordinates">
+                                <span>位置: ({{ result.coordinates.x1.toFixed(0) }}, {{ result.coordinates.y1.toFixed(0) }}) - ({{ result.coordinates.x2.toFixed(0) }}, {{ result.coordinates.y2.toFixed(0) }})</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 操作按钮 -->
+                <div class="mt-4 flex flex-wrap gap-3 justify-center">
+                    <button 
+                        @click="copyResults"
+                        class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all-300 flex items-center"
+                    >
+                        <i class="fa fa-copy mr-2"></i> 复制结果
+                    </button>
+                    
+                    <button 
+                        @click="downloadResultImage"
+                        class="px-4 py-2 bg-success text-white rounded-lg hover:bg-success/90 transition-all-300 flex items-center"
+                    >
+                        <i class="fa fa-download mr-2"></i> 下载结果图
+                    </button>
+                </div>
+            </section>
+            
+            <!-- 错误提示 -->
+            <section v-if="error" class="bg-red-50 border border-red-200 rounded-xl p-6">
+                <div class="flex items-start">
+                    <i class="fa fa-exclamation-circle text-danger text-xl mt-1 mr-3"></i>
+                    <div>
+                        <h3 class="font-medium text-danger">识别失败</h3>
+                        <p class="text-gray-700 mt-1">{{ error }}</p>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- 实时日志展示 -->
+            <section class="bg-white rounded-xl p-6 shadow-soft">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800 flex items-center">
+                        <i class="fa fa-terminal text-primary mr-2"></i> 实时日志
+                    </h2>
+                    <button 
+                        @click="clearLogs"
+                        class="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all-300 flex items-center"
+                    >
+                        <i class="fa fa-trash-o mr-1"></i> 清空日志
+                    </button>
+                </div>
+                
+                <div class="relative h-60 overflow-y-auto bg-gray-50 rounded-lg p-4 font-mono text-sm">
+                    <div v-if="logs.length === 0" class="absolute inset-0 flex items-center justify-center text-gray-400">
+                        <span>等待日志输出...</span>
+                    </div>
+                    <div v-for="(log, index) in logs" :key="index" class="mb-1">
+                        <span class="text-gray-500 mr-2">{{ formatTime(log.timestamp) }}</span>
+                        <span 
+                            :class="{
+                                'text-blue-600': log.type === 'info',
+                                'text-green-600': log.type === 'success',
+                                'text-yellow-600': log.type === 'progress',
+                                'text-red-600': log.type === 'error'
+                            }"
+                        >
+                            <i :class="getLogIcon(log.type)" class="mr-1"></i>{{ log.message }}
+                        </span>
+                    </div>
+                </div>
+            </section>
+        </main>
+        
+        <!-- 页面底部 -->
+        <footer class="mt-12 text-center text-gray-500 text-sm">
+            <p>&copy; <span v-text="new Date().getFullYear()"></span> 车牌识别演示系统 - 基于YOLO和Paddleocr技术</p>
+        </footer>
+    </div>
+    
+    <script>
+        // 创建Vue应用
+        const app = Vue.createApp({
+            data() {
+                return {
+                    selectedFile: null,
+                    previewUrl: null,
+                    results: null,
+                    originalImageUrl: null,
+                    resultImageUrl: null,
+                    plateRegionImageUrl: null,
+                    isLoading: false,
+                    error: null,
+                    isDragging: false,
+                    showCoordinates: false,
+                    logs: [],
+                    websocket: null,
+                    maxLogs: 100
+                }
+            },
+            
+            mounted() {
+                // 建立WebSocket连接
+                this.connectWebSocket();
+                
+                // 监听页面关闭事件，关闭WebSocket连接
+                window.addEventListener('beforeunload', this.closeWebSocket);
+            },
+            
+            beforeUnmount() {
+                // 组件卸载时关闭WebSocket连接
+                this.closeWebSocket();
+            },
+            methods: {
+                // 触发文件选择
+                triggerFileInput() {
+                    this.$refs.fileInput.click();
+                },
+                
+                // 处理文件选择
+                handleFileSelect(event) {
+                    const file = event.target.files[0];
+                    if (file) {
+                        this.processFile(file);
+                    }
+                },
+                
+                // 处理拖放文件
+                handleDrop(event) {
+                    this.isDragging = false;
+                    const file = event.dataTransfer.files[0];
+                    if (file) {
+                        this.processFile(file);
+                    }
+                },
+                
+                // 处理文件
+                processFile(file) {
+                    this.selectedFile = file;
+                    this.results = null;
+                    this.error = null;
+                    
+                    // 生成预览
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        this.previewUrl = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                },
+                
+                // 连接WebSocket
+                connectWebSocket() {
+                    try {
+                        // WebSocket连接URL
+                        const wsUrl = 'ws://localhost:8000/ws/logs';
+                        this.websocket = new WebSocket(wsUrl);
+                        
+                        // 连接成功
+                        this.websocket.onopen = () => {
+                            console.log('WebSocket连接成功');
+                            this.addLog('info', '日志连接已建立');
+                        };
+                        
+                        // 接收消息
+                        this.websocket.onmessage = (event) => {
+                            try {
+                                const logData = JSON.parse(event.data);
+                                this.addLog(logData.type, logData.message, logData.timestamp);
+                            } catch (e) {
+                                console.error('解析日志数据失败:', e);
+                            }
+                        };
+                        
+                        // 连接关闭
+                        this.websocket.onclose = () => {
+                            console.log('WebSocket连接关闭');
+                            this.addLog('info', '日志连接已关闭');
+                            // 尝试重新连接
+                            setTimeout(() => {
+                                this.connectWebSocket();
+                            }, 3000);
+                        };
+                        
+                        // 连接错误
+                        this.websocket.onerror = (error) => {
+                            console.error('WebSocket错误:', error);
+                            this.addLog('error', `日志连接错误: ${error.message || '未知错误'}`);
+                        };
+                    } catch (e) {
+                        console.error('建立WebSocket连接失败:', e);
+                    }
+                },
+                
+                // 关闭WebSocket连接
+                closeWebSocket() {
+                    if (this.websocket) {
+                        this.websocket.close();
+                        this.websocket = null;
+                    }
+                },
+                
+                // 添加日志
+                addLog(type, message, timestamp = null) {
+                    const log = {
+                        type: type,
+                        message: message,
+                        timestamp: timestamp || new Date().toISOString()
+                    };
+                    
+                    this.logs.push(log);
+                    
+                    // 保持日志数量在最大值以内
+                    if (this.logs.length > this.maxLogs) {
+                        this.logs.shift();
+                    }
+                    
+                    // 自动滚动到底部
+                    this.$nextTick(() => {
+                        const logContainer = document.querySelector('.overflow-y-auto');
+                        if (logContainer) {
+                            logContainer.scrollTop = logContainer.scrollHeight;
+                        }
+                    });
+                },
+                
+                // 清空日志
+                clearLogs() {
+                    this.logs = [];
+                },
+                
+                // 格式化时间
+                formatTime(timestamp) {
+                    const date = new Date(timestamp);
+                    return date.toLocaleTimeString('zh-CN', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    });
+                },
+                
+                // 获取日志图标
+                getLogIcon(type) {
+                    const icons = {
+                        'info': 'fa-info-circle',
+                        'success': 'fa-check-circle',
+                        'progress': 'fa-cog fa-spin',
+                        'error': 'fa-exclamation-circle'
+                    };
+                    return icons[type] || 'fa-circle';
+                },
+                
+                // 开始识别
+                async recognize() {
+                    if (!this.selectedFile) return;
+                    
+                    this.isLoading = true;
+                    this.error = null;
+                    
+                    try {
+                        // 创建FormData
+                        const formData = new FormData();
+                        formData.append('file', this.selectedFile);
+                        
+                        // 发送请求到识别服务
+                        const response = await fetch('http://localhost:8000/api/recognize', {
+                            method: 'POST',
+                            body: formData,
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            // 处理成功响应
+                            if (data.data.results) {
+                                this.results = data.data.results;
+                                this.originalImageUrl = 'http://localhost:8001' + data.data.original_image;
+                                this.resultImageUrl = 'http://localhost:8001' + data.data.result_image;
+                                
+                                // 设置车牌区域图片URL（优先使用第一个识别结果中的区域图片）
+                                if (this.results && this.results.length > 0 && this.results[0].plate_region_image) {
+                                    this.plateRegionImageUrl = 'http://localhost:8001' + this.results[0].plate_region_image;
+                                } else if (data.data.plate_region_images && data.data.plate_region_images.length > 0) {
+                                    this.plateRegionImageUrl = 'http://localhost:8001' + data.data.plate_region_images[0];
+                                } else {
+                                    this.plateRegionImageUrl = null;
+                                }
+                            } else {
+                                // 未检测到车牌的情况
+                                this.error = data.data.message || '未检测到车牌';
+                                this.plateRegionImageUrl = null;
+                            }
+                        } else {
+                            this.error = data.error || '识别失败';
+                            this.plateRegionImageUrl = null;
+                        }
+                    } catch (err) {
+                        console.error('识别请求失败:', err);
+                        this.error = '网络请求失败，请检查服务是否运行';
+                    } finally {
+                        this.isLoading = false;
+                    }
+                },
+                
+                // 重置
+                reset() {
+                    this.selectedFile = null;
+                    this.previewUrl = null;
+                    this.results = null;
+                    this.originalImageUrl = null;
+                    this.resultImageUrl = null;
+                    this.plateRegionImageUrl = null;
+                    this.error = null;
+                    this.$refs.fileInput.value = '';
+                },
+                
+                // 复制结果
+                copyResults() {
+                    if (!this.results || this.results.length === 0) return;
+                    
+                    let textToCopy = '车牌识别结果:\n';
+                    this.results.forEach((result, index) => {
+                        textToCopy += `${index + 1}. 车牌: ${result.number_plate}\n`;
+                        textToCopy += `   OCR置信度: ${(result.ocr_confidence * 100).toFixed(1)}%\n`;
+                        textToCopy += `   YOLO置信度: ${(result.yolo_confidence * 100).toFixed(1)}%\n`;
+                    });
+                    
+                    navigator.clipboard.writeText(textToCopy).then(() => {
+                        // 显示复制成功提示
+                        alert('结果已复制到剪贴板');
+                    }).catch(err => {
+                        console.error('复制失败:', err);
+                    });
+                },
+                
+                // 下载结果图片
+                downloadResultImage() {
+                    if (!this.resultImageUrl) return;
+                    
+                    const link = document.createElement('a');
+                    link.href = this.resultImageUrl;
+                    link.download = `车牌识别结果_${new Date().getTime()}.jpg`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                }
+            }
+        });
+        
+        // 挂载应用
+        app.mount('#app');
+    </script>
+</body>
+</html>
